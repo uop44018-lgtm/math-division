@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>除法挑戰：熱血終極版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+        @keyframes pulse-green { 0%, 100% { border-color: #22c55e; box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); } 50% { border-color: #4ade80; box-shadow: 0 0 15px 5px rgba(34, 197, 94, 0); } }
+        .animate-pulse-green { animation: pulse-green 1.5s infinite; border-width: 4px !important; }
+        @keyframes shake-red { 0%, 100% { transform: translateX(0); border-color: #ef4444; } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+        .animate-shake-red { animation: shake-red 0.5s ease-in-out; border-width: 4px !important; }
+        @keyframes bounce-green { 0%, 100% { transform: scale(1); border-color: #22c55e; } 50% { transform: scale(1.05); border-color: #22c55e; background-color: #f0fdf4; } }
+        .animate-bounce-green { animation: bounce-green 0.6s ease-in-out; }
+        
+        /* 慷慨激昂特效 */
+        @keyframes bg-victory { 0% { background-color: #eff6ff; } 50% { background-color: #dcfce7; } 100% { background-color: #fef9c3; } }
+        .victory-bg { animation: bg-victory 2s infinite alternate; }
+        @keyframes trophy-jump { 0%, 100% { transform: scale(1) rotate(0deg); } 25% { transform: scale(1.2) rotate(-10deg); } 75% { transform: scale(1.2) rotate(10deg); } }
+        .animate-trophy { animation: trophy-jump 0.8s infinite ease-in-out; }
+
+        .math-font { font-family: 'Consolas', monospace; }
+        .cell { width: 2.8rem; height: 3rem; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: 900; position: relative; }
+        .bracket-overlay { position: absolute; border-top: 5px solid #1e293b; border-left: 5px solid #1e293b; border-top-left-radius: 20px; pointer-events: none; z-index: 10; top: 3rem; }
+        .step-active { background-color: #dbeafe; border-left: 6px solid #2563eb; color: #1e40af; }
+        .final-answer-box { width: 50px; height: 40px; border: 2px solid #cbd5e1; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 900; background: white; }
+        .final-answer-focus { border-color: #3b82f6; background-color: #eff6ff; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-slate-50 overflow-hidden">
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const App = () => {
+            const [page, setPage] = useState('home'); 
+            const [config, setConfig] = useState({ divDigits: 3, disDigits: 1, hintMode: 'table' });
+            const [session, setSession] = useState({ current: 1, total: 10, totalScore: 0 });
+            const [dividend, setDividend] = useState(0);
+            const [divisor, setDivisor] = useState(0);
+            const [steps, setSteps] = useState([]);
+            const [currentStepIdx, setCurrentStepIdx] = useState(0);
+            const [userInputs, setUserInputs] = useState({});
+            const [gridComplete, setGridComplete] = useState(false); 
+            const [isDone, setIsDone] = useState(false); 
+            const [finalFocus, setFinalFocus] = useState(null); 
+            const [finalAns, setFinalAns] = useState({ q: '', r: '' });
+            const [feedbackError, setFeedbackError] = useState(null);
+            const [showNextBtn, setShowNextBtn] = useState(false);
+            const [timer, setTimer] = useState(60); 
+            const [showAnswerBtn, setShowAnswerBtn] = useState(false);
+            const [revealed, setRevealed] = useState(false);
+            const [checkTimer, setCheckTimer] = useState(20); 
+            const [canFillAfterReveal, setCanFillAfterReveal] = useState(false);
+            const [verticalTrial, setVerticalTrial] = useState(1);
+            const [multiInputs, setMultiInputs] = useState({ unit: '', carry: '', ten: '', hundred: '' });
+            const [multiFocus, setMultiFocus] = useState('unit');
+            const [solvedMulti, setSolvedMulti] = useState({});
+            const [multiStatus, setMultiStatus] = useState(null); 
+
+            const playSound = (type) => {
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const now = ctx.currentTime;
+                const g = ctx.createGain();
+                g.connect(ctx.destination);
+                
+                if (type === 'ding') {
+                    const o = ctx.createOscillator(); o.connect(g);
+                    o.frequency.setValueAtTime(880, now); g.gain.setValueAtTime(0.1, now);
+                    g.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                    o.start(); o.stop(now + 0.3);
+                } else if (type === 'error') {
+                    const o = ctx.createOscillator(); o.connect(g); o.type = 'sawtooth';
+                    o.frequency.setValueAtTime(150, now); g.gain.setValueAtTime(0.2, now);
+                    g.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+                    o.start(); o.stop(now + 0.4);
+                } else if (type === 'victory') {
+                    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+                        const o = ctx.createOscillator(); const gn = ctx.createGain();
+                        o.connect(gn); gn.connect(ctx.destination);
+                        o.frequency.setValueAtTime(f, now + i*0.15);
+                        gn.gain.setValueAtTime(0.1, now + i*0.15);
+                        gn.gain.exponentialRampToValueAtTime(0.01, now + i*0.15 + 0.5);
+                        o.start(now + i*0.15); o.stop(now + i*0.15 + 0.5);
+                    });
+                }
+            };
+
+            const speak = (text) => { const msg = new SpeechSynthesisUtterance(text); msg.lang = 'zh-TW'; window.speechSynthesis.speak(msg); };
+
+            const startExercise = (isNew = false) => {
+                const dis = Math.floor(Math.random() * (Math.pow(10, config.disDigits) - Math.pow(10, config.disDigits-1))) + Math.pow(10, config.disDigits-1);
+                let div = Math.floor(Math.random() * (Math.pow(10, config.divDigits) - Math.pow(10, config.divDigits-1))) + Math.pow(10, config.divDigits-1);
+                if (div < dis) div += dis;
+                setDivisor(dis); setDividend(div); setSteps(generateSteps(div, dis));
+                setCurrentStepIdx(0); setUserInputs({}); setGridComplete(false); setIsDone(false); setFinalAns({ q: '', r: '' }); setFinalFocus(null); setShowNextBtn(false); setRevealed(false); setTimer(60); setShowAnswerBtn(false); setCheckTimer(20); setCanFillAfterReveal(false); setSolvedMulti({}); setMultiInputs({unit:'',carry:'',ten:'',hundred:''}); setMultiFocus('unit');
+                if (isNew) setSession({ current: 1, total: 10, totalScore: 0 });
+                setPage('play');
+            };
+
+            const generateSteps = (div, dis) => {
+                const s = []; const divS = div.toString(); let rem = 0; let row = 2;
+                for (let i = 0; i < divS.length; i++) {
+                    const digit = parseInt(divS[i]); const val = rem * 10 + digit; const q = Math.floor(val / dis);
+                    if (q === 0 && s.length === 0 && i < divS.length - 1) { rem = val; continue; }
+                    s.push({ type: 'q', r: 0, c: i + config.disDigits, val: q, stage: 1 });
+                    const p = q * dis; const pS = p.toString();
+                    for (let j = pS.length - 1; j >= 0; j--) s.push({ type: 'p', r: row, c: (i + config.disDigits) - (pS.length - 1 - j), val: parseInt(pS[j]), stage: 1 });
+                    row++; const nextRem = val - p; const nextRemS = nextRem.toString();
+                    for (let j = nextRemS.length - 1; j >= 0; j--) s.push({ type: 'r', r: row, c: (i + config.disDigits) - (nextRemS.length - 1 - j), val: parseInt(nextRemS[j]), stage: 2 });
+                    if (i < divS.length - 1) s.push({ type: 'bringdown', r: row, c: i + config.disDigits + 1, val: parseInt(divS[i+1]), stage: 3 });
+                    rem = nextRem; if (i < divS.length - 1) row++;
+                }
+                return s;
+            };
+
+            useEffect(() => {
+                let interval;
+                if (page === 'play' && config.hintMode === 'independent' && timer > 0 && !revealed) interval = setInterval(() => setTimer(t => t - 1), 1000);
+                else if (timer === 0) setShowAnswerBtn(true);
+                return () => clearInterval(interval);
+            }, [page, timer, config.hintMode, revealed]);
+
+            useEffect(() => {
+                let interval;
+                if (revealed && checkTimer > 0) interval = setInterval(() => setCheckTimer(t => t - 1), 1000);
+                else if (revealed && checkTimer === 0) setCanFillAfterReveal(true);
+                return () => clearInterval(interval);
+            }, [revealed, checkTimer]);
+
+            const onKeypad = (n) => {
+                if (!gridComplete && !revealed) {
+                    const step = steps[currentStepIdx];
+                    if (n === step.val) { playSound('ding'); setUserInputs(prev => ({ ...prev, [`${step.r}-${step.c}`]: n })); if (currentStepIdx < steps.length - 1) setCurrentStepIdx(v => v + 1); else { setGridComplete(true); speak("寫上答案"); setFinalFocus('q'); } }
+                    else { playSound('error'); setFeedbackError(`${step.r}-${step.c}`); setTimeout(() => setFeedbackError(null), 500); }
+                } else if (finalFocus) {
+                    const targetQ = Math.floor(dividend / divisor).toString(); const targetR = (dividend % divisor).toString();
+                    const currentVal = finalAns[finalFocus]; const nextVal = currentVal + n.toString();
+                    if (finalFocus === 'q') { if (targetQ.startsWith(nextVal)) { playSound('ding'); setFinalAns(p => ({...p, q: nextVal})); if (nextVal === targetQ) setFinalFocus('r'); } else triggerFinalError(); }
+                    else { if (targetR.startsWith(nextVal)) { playSound('ding'); setFinalAns(p => ({...p, r: nextVal})); if (nextVal === targetR) { setIsDone(true); playSound('victory'); setSession(s => ({...s, totalScore: s.totalScore + 10})); setTimeout(() => setShowNextBtn(true), 1000); } } else triggerFinalError(); }
+                }
+            };
+
+            const triggerFinalError = () => { playSound('error'); setFeedbackError('final'); setTimeout(() => setFeedbackError(null), 500); };
+
+            const onMultiKeypad = (n) => {
+                const prod = divisor * verticalTrial;
+                const correct = multiFocus === 'unit' ? prod % 10 : multiFocus === 'carry' ? Math.floor(((divisor%10)*verticalTrial)/10) : multiFocus === 'ten' ? Math.floor(prod/10)%10 : Math.floor(prod/100);
+                if (n === correct) { playSound('ding'); setMultiInputs(p => ({...p, [multiFocus]: n})); if (multiFocus === 'unit') setMultiFocus(Math.floor(((divisor%10)*verticalTrial)/10) > 0 ? 'carry' : 'ten'); else if (multiFocus === 'carry') setMultiFocus('ten'); else if (multiFocus === 'ten') { if (Math.floor(prod/100) > 0) setMultiFocus('hundred'); else finalizeMulti(prod); } else finalizeMulti(prod); }
+                else { playSound('error'); setMultiStatus('error'); setTimeout(() => setMultiStatus(null), 500); }
+            };
+
+            const finalizeMulti = (prod) => { setSolvedMulti(prev => ({ ...prev, [verticalTrial]: prod })); setMultiStatus('final'); playSound('victory'); setTimeout(()=>setMultiStatus(null), 600); };
+
+            if (page === 'home') return (
+                <div className="flex flex-col items-center justify-center min-h-screen p-4 bg-white">
+                    <h1 className="text-2xl font-black mb-6 text-blue-600 tracking-tighter">除法挑戰設定</h1>
+                    <div className="w-full max-w-xs space-y-4">
+                        <div><p className="text-sm font-bold text-slate-400 mb-1 uppercase">1. 被除數位數</p>
+                        <div className="flex gap-2">{[2,3,4].map(n => <button key={n} onClick={()=>setConfig({...config, divDigits:n})} className={`flex-1 py-2 rounded-lg border-2 ${config.divDigits===n?'border-blue-500 bg-blue-50 text-blue-700 font-black':'text-slate-300'}`}>{n}位</button>)}</div></div>
+                        <div><p className="text-sm font-bold text-slate-400 mb-1 uppercase">2. 除數位數</p>
+                        <div className="flex gap-2">{[1,2].map(n => <button key={n} onClick={()=>setConfig({...config, disDigits:n})} className={`flex-1 py-2 rounded-lg border-2 ${config.disDigits===n?'border-blue-500 bg-blue-50 text-blue-700 font-black':'text-slate-300'}`}>{n}位</button>)}</div></div>
+                        <div><p className="text-sm font-bold text-slate-400 mb-1 uppercase">3. 學習模式</p>
+                        <div className="flex flex-col gap-2">{['提供估商乘法表', '乘法表與直式提示', '紙本挑戰'].map((t,i) => (<button key={i} onClick={()=>setConfig({...config, hintMode:['table','both','independent'][i]})} className={`py-2 rounded-lg border-2 ${config.hintMode===['table','both','independent'][i]?'border-blue-500 text-blue-700 font-black':'text-slate-200'}`}>{t}</button>))}</div></div>
+                        <button onClick={() => startExercise(true)} className="w-full bg-blue-600 text-white py-3 rounded-xl font-black shadow-lg mt-4">開始挑戰</button>
+                    </div>
+                </div>
+            );
+
+            if (page === 'summary') return (
+                <div className="flex flex-col items-center justify-center min-h-screen text-center p-6 bg-white victory-bg relative overflow-hidden">
+                    <div className="text-9xl mb-12 animate-trophy">🏆</div>
+                    <h2 className="text-3xl font-black text-slate-600 mb-2 uppercase tracking-tighter animate-bounce">挑戰全數達成！</h2>
+                    <div className="text-8xl font-black text-blue-600 mb-12 drop-shadow-xl">{session.totalScore} <span className="text-2xl text-slate-400">分</span></div>
+                    <div className="text-2xl font-bold text-slate-700 mb-12 px-4 leading-relaxed animate-pulse">
+                        {session.totalScore >= 90 ? "妳簡直是除法界的傳奇！" : session.totalScore >= 60 ? "太驚人了！進步超級神速！" : "做的太棒了！下次一定更強！"}
+                    </div>
+                    <button onClick={() => setPage('home')} className="w-full max-w-xs bg-blue-600 text-white py-5 rounded-full font-black text-2xl shadow-2xl hover:scale-110 active:scale-95 transition-transform">重新啟動挑戰</button>
+                </div>
+            );
+
+            const activeStage = gridComplete ? 4 : (steps[currentStepIdx]?.stage || 1);
+
+            return (
+                <div className="game-container bg-slate-50 math-font relative h-screen flex flex-col overflow-hidden">
+                    <div className="shrink-0 bg-white border-b px-4 py-2 flex justify-between items-center text-xs font-bold">
+                        <span className="text-slate-400 tracking-tighter">第 {session.current}/{session.total} 題</span>
+                        <div className="flex items-center gap-2 bg-slate-100 px-3 py-1 rounded-full">
+                            <span className="text-red-500">{dividend}</span><span className="text-slate-300">÷</span><span className="text-blue-500">{divisor}</span>
+                            <span className="mx-1">=</span>
+                            <div onClick={()=>(gridComplete || canFillAfterReveal) && setFinalFocus('q')} className={`final-answer-box !w-10 !h-8 !text-sm !border-2 ${finalFocus==='q'?'final-answer-focus':''} ${gridComplete && finalFocus==='q'?'animate-pulse-green':''}`}>{finalAns.q}</div>
+                            <span className="text-slate-300">...</span>
+                            <div onClick={()=>(gridComplete || canFillAfterReveal) && setFinalFocus('r')} className={`final-answer-box !w-10 !h-8 !text-sm !border-2 ${finalFocus==='r'?'final-answer-focus':''} ${gridComplete && finalFocus==='r'?'animate-pulse-green':''}`}>{finalAns.r}</div>
+                        </div>
+                        <span className="text-blue-600 tracking-tighter">得分：{session.totalScore}</span>
+                    </div>
+
+                    <div className="flex flex-1 overflow-hidden">
+                        {/* 步驟指引：紙本挑戰全亮模式 */}
+                        <div className="hidden sm:flex w-48 bg-white border-r p-4 flex flex-col gap-3 shrink-0 overflow-y-auto no-scrollbar shadow-inner">
+                            <p className="text-[10px] font-black text-slate-300 tracking-widest uppercase mb-1">步驟導覽</p>
+                            {[1, 2, 3, 4].map(s => (
+                                <div key={s} className={`p-2 rounded-lg border text-[10px] font-black transition-all ${config.hintMode === 'independent' || activeStage === s ? 'step-active shadow-sm' : 'text-slate-200 border-transparent'}`}>
+                                    {s===1?'1. 進行估商':s===2?'2. 減一減':s===3?'3. 放下數字':'4. 寫上答案'}
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="flex-1 flex flex-col p-2 overflow-hidden items-center justify-between">
+                            {config.hintMode === 'independent' && !revealed ? (
+                                <div className="flex-1 flex flex-col items-center justify-center text-center">
+                                    <div className="text-3xl font-black text-blue-600 animate-pulse-slow mb-4 tracking-tighter uppercase">請用紙筆挑戰計算</div>
+                                    <div className="text-xl font-bold text-slate-400 mb-6">戰鬥倒數：{timer} 秒</div>
+                                    {showAnswerBtn && <button onClick={() => { setRevealed(true); setSession(s=>({...s, totalScore: s.totalScore + 5})); playSound('victory'); }} className="bg-orange-500 text-white px-8 py-3 rounded-full font-black text-lg shadow-xl animate-bounce">點我對答案</button>}
+                                </div>
+                            ) : (
+                                <div className="flex-1 w-full flex flex-col items-center justify-center overflow-auto no-scrollbar">
+                                    <div className="division-grid scale-75 sm:scale-90 origin-center relative">
+                                        <div className="bracket-overlay" style={{ left: `${config.disDigits * 2.8}rem`, width: `${config.divDigits * 2.8 + 0.5}rem`, height: `3rem` }}></div>
+                                        {Array.from({length: 10}).map((_, r) => (
+                                            <div key={r} className="flex h-[3rem]">
+                                                {Array.from({length: config.disDigits + config.divDigits + 2}).map((_, c) => {
+                                                    const key = `${r}-${c}`; let char = ""; let isTarget = false; const off = config.disDigits;
+                                                    if (r === 1 && c < off) char = <span className="text-blue-500">{divisor.toString()[c]}</span>;
+                                                    if (r === 1 && c >= off && c < off + config.divDigits) char = <span className="text-red-500">{dividend.toString()[c - off]}</span>;
+                                                    if (revealed) { const s = steps.find(x => x.r === r && x.c === c); if (s) char = <span className="text-blue-600">{s.val}</span>; }
+                                                    else if (userInputs[key] !== undefined) char = userInputs[key];
+                                                    else if (!gridComplete && steps[currentStepIdx]?.r === r && steps[currentStepIdx]?.c === c) { char = "?"; isTarget = true; }
+                                                    const hasLine = steps.some(s => s.type === 'p' && s.r === r-1 && s.c === c && (revealed || userInputs[`${r-1}-${c}`] !== undefined));
+                                                    return (
+                                                        <div key={c} className={`cell transition-all ${isTarget ? 'bg-blue-100 rounded-lg ring-2 ring-blue-300' : ''} ${feedbackError === key ? 'animate-shake-red' : ''} ${hasLine?'border-t-[5px] border-slate-800':''}`}>
+                                                            {char}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {revealed && !canFillAfterReveal && <div className="text-orange-500 text-xs font-bold animate-bounce mb-2 tracking-tighter">冷靜核對！按鈕在 {checkTimer} 秒後出現...</div>}
+                                </div>
+                            )}
+
+                            {!isDone && (config.hintMode !== 'independent' || canFillAfterReveal) && (
+                                <div className="w-full max-w-sm grid grid-cols-5 gap-2 p-2 bg-slate-100 rounded-t-2xl shrink-0">
+                                    {[1,2,3,4,5,6,7,8,9,0].map(n => <button key={n} onClick={() => onKeypad(n)} className="h-12 bg-white rounded-xl shadow-sm font-black text-xl active:bg-blue-500 active:text-white transition-colors">{n}</button>)}
+                                </div>
+                            )}
+                        </div>
+
+                        {config.hintMode !== 'independent' && !isDone && (
+                            <div className="w-24 sm:w-64 bg-slate-50 border-l p-2 flex flex-col gap-2 overflow-y-auto no-scrollbar shadow-inner shrink-0">
+                                <p className="text-[8px] font-black text-slate-400 text-center uppercase tracking-widest tracking-tighter">戰鬥助手</p>
+                                <div className="space-y-1 mb-2">
+                                    {[1,2,3,4,5,6,7,8,9].map(n => (
+                                        <button key={n} onClick={() => {setVerticalTrial(n); setMultiInputs({unit:'',carry:'',ten:'',hundred:''}); setMultiFocus('unit');}} className={`w-full flex flex-col sm:flex-row justify-between p-1 rounded-lg border text-[10px] font-bold transition-all ${verticalTrial===n?'border-blue-500 bg-blue-50':'bg-white text-slate-300'}`}>
+                                            <span className="scale-75 sm:scale-100">{divisor}×{n}</span><span className="text-blue-600">{config.hintMode==='table' || solvedMulti[n] ? divisor * n : '?'}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                                {config.hintMode === 'both' && (
+                                    <div className={`bg-slate-800 rounded-xl p-2 text-white shrink-0 scale-75 sm:scale-100 origin-top ${multiStatus === 'error' ? 'animate-shake-red' : ''} ${multiStatus === 'final' ? 'animate-bounce-green' : ''}`}>
+                                        <div className="flex flex-col items-end pr-1 gap-0.5 mb-1">
+                                            <div className="flex gap-1"><div className="carry-box text-[8px] !w-4 !h-4">{multiInputs.carry}</div><div className="w-6 text-right text-xs font-black">{divisor}</div></div>
+                                            <div className="flex items-center gap-1 border-b border-slate-600 pb-1 w-full justify-end text-xs"><span className="text-slate-500 scale-75">×</span><div className="w-6 text-right font-black">{verticalTrial}</div></div>
+                                            <div className="flex gap-1 mt-0.5">
+                                                <div className={`w-6 h-8 flex items-center justify-center rounded-lg text-sm font-black ${multiFocus==='hundred'?'bg-blue-500 ring-1':'text-slate-600'}`}>{multiInputs.hundred}</div>
+                                                <div className={`w-6 h-8 flex items-center justify-center rounded-lg text-sm font-black ${multiFocus==='ten'?'bg-blue-500 ring-1':'text-slate-600'}`}>{multiInputs.ten}</div>
+                                                <div className={`w-6 h-8 flex items-center justify-center rounded-lg text-sm font-black ${multiFocus==='unit'?'bg-blue-500 ring-1':'text-slate-600'}`}>{multiInputs.unit}</div>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-1">{[1,2,3,4,5,6,7,8,9,0].map(n => <button key={n} onClick={() => onMultiKeypad(n)} className="h-6 bg-slate-700 rounded-lg text-[10px] font-black active:bg-blue-500 transition-colors">{n}</button>)}</div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {isDone && (
+                        <div className="absolute inset-0 bg-blue-600/95 flex flex-col items-center justify-center text-white z-50 p-6 text-center animate-in zoom-in">
+                            <h2 className="text-4xl font-black mb-6 tracking-widest animate-bounce">太出色了！🎉</h2>
+                            {showNextBtn && <button onClick={() => { if(session.current < session.total) { startExercise(); setSession(s=>({...s, current: s.current+1})); } else { playSound('victory'); setPage('summary'); } }} className="bg-white text-blue-600 px-12 py-3 rounded-full font-black text-xl shadow-2xl active:scale-95 transition-all">迎向下一關</button>}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
